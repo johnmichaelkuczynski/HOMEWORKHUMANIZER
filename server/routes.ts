@@ -121,63 +121,6 @@ function detectContentType(text: string): 'math' | 'document' | 'general' {
   return 'general';
 }
 
-// Generate preview for freemium model
-function generatePreview(fullResponse: string): string {
-  // Remove any existing graph data JSON from the end
-  const lines = fullResponse.split('\n');
-  let contentLines = [...lines];
-  
-  // Remove graph data if present
-  const graphStartIndex = contentLines.findIndex(line => 
-    line.trim().startsWith('```json') || line.includes('GRAPH_DATA_START')
-  );
-  if (graphStartIndex !== -1) {
-    contentLines = contentLines.slice(0, graphStartIndex);
-  }
-  
-  const cleanResponse = contentLines.join('\n').trim();
-  
-  // Split into sentences for better preview control
-  const sentences = cleanResponse.split(/(?<=[.!?])\s+/);
-  
-  // For math problems: Show problem setup + first step
-  if (detectContentType(cleanResponse) === 'math') {
-    // Find first few sentences that explain the approach
-    let preview = '';
-    let sentenceCount = 0;
-    
-    for (const sentence of sentences) {
-      preview += sentence + ' ';
-      sentenceCount++;
-      
-      // Stop after 2-3 sentences or when we hit the actual solution steps
-      if (sentenceCount >= 2 || sentence.includes('Step 1') || sentence.includes('Solution:')) {
-        break;
-      }
-    }
-    
-    return preview.trim() + '\n\n**🔒 Complete solution with all steps available with credits**\n\n[Buy Credits with PayPal to see the full step-by-step solution]';
-  }
-  
-  // For documents: Show introduction + first main point
-  else if (detectContentType(cleanResponse) === 'document') {
-    const words = cleanResponse.split(/\s+/);
-    const previewWords = words.slice(0, 150); // ~150 words preview
-    
-    return previewWords.join(' ') + '...\n\n**🔒 Complete analysis available with credits**\n\n[Buy Credits with PayPal to see the full detailed analysis]';
-  }
-  
-  // For general questions: Show first paragraph
-  else {
-    const paragraphs = cleanResponse.split(/\n\s*\n/);
-    const firstParagraph = paragraphs[0] || '';
-    
-    const words = firstParagraph.split(/\s+/);
-    const previewWords = words.slice(0, 100); // ~100 words preview
-    
-    return previewWords.join(' ') + '...\n\n**🔒 Complete answer available with credits**\n\n[Buy Credits with PayPal to see the full detailed response]';
-  }
-}
 
 // Direct DeepSeek processing without content detection (for refinements)
 async function processDirectWithDeepSeek(prompt: string): Promise<{response: string, graphData?: GraphRequest[]}> {
@@ -2076,68 +2019,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const estimatedOutputTokens = estimateOutputTokens(inputText);
       const totalTokens = inputTokens + estimatedOutputTokens;
       
-      // Check if user is authenticated
-      if (req.session.userId) {
-        const user = await authService.getUserById(req.session.userId);
-        if (!user) {
-          return res.status(404).json({ error: 'User not found' });
-        }
-        
-        // SPECIAL CASE: jmkuczynski and randyjohnson have unlimited access
-        if (user.username === 'jmkuczynski' || user.username === 'randyjohnson') {
-          res.json({
-            canProcess: true,
-            inputTokens,
-            estimatedOutputTokens,
-            remainingBalance: 99999999,
-            message: undefined
-          });
-          return;
-        }
-        
-        const canProcess = (user.tokenBalance || 0) >= totalTokens;
-        
-        res.json({
-          canProcess,
-          inputTokens,
-          estimatedOutputTokens,
-          remainingBalance: user.tokenBalance || 0,
-          message: canProcess ? undefined : '🔒 You\'ve used all your credits. [Buy More Credits]'
-        });
-      } else {
-        // Free user logic
-        const today = getTodayDate();
-        const dailyUsage = await storage.getDailyUsage(sessionId || generateSessionId(), today);
-        const currentDailyUsage = dailyUsage?.totalTokens || 0;
-        
-        let canProcess = true;
-        let message: string | undefined;
-        
-        // Check input token limit
-        if (inputTokens > TOKEN_LIMITS.FREE_INPUT_LIMIT) {
-          canProcess = false;
-          message = '🔒 Full results available with upgrade. [Register & Unlock Full Access]';
-        }
-        // Check output token limit
-        else if (estimatedOutputTokens > TOKEN_LIMITS.FREE_OUTPUT_LIMIT) {
-          canProcess = false;
-          message = '🔒 Full results available with upgrade. [Register & Unlock Full Access]';
-        }
-        // Check daily limit
-        else if (currentDailyUsage + totalTokens > TOKEN_LIMITS.FREE_DAILY_LIMIT) {
-          canProcess = false;
-          message = '🔒 You\'ve reached the free usage limit for today. [Register & Unlock Full Access]';
-        }
-        
-        res.json({
-          canProcess,
-          inputTokens,
-          estimatedOutputTokens,
-          dailyUsage: currentDailyUsage,
-          dailyLimit: TOKEN_LIMITS.FREE_DAILY_LIMIT,
-          message
-        });
-      }
+      // All users get unlimited access
+      res.json({
+        canProcess: true,
+        inputTokens,
+        estimatedOutputTokens,
+        remainingBalance: 99999999,
+        message: undefined
+      });
     } catch (error) {
       console.error('Token check error:', error);
       res.status(500).json({ error: 'Failed to check tokens' });
@@ -2608,7 +2497,7 @@ Respond with the refined solution only:`;
 
         res.json(response);
       } else {
-        // Free user - FREEMIUM MODEL: Process full answer but show only preview
+        // Free user - Give full access to all users
         if (!actualSessionId) {
           actualSessionId = generateSessionId();
         }
@@ -2635,18 +2524,23 @@ Respond with the refined solution only:`;
             throw new Error(`Unsupported LLM provider: ${llmProvider}`);
         }
 
-        // Generate preview for free users
-        const previewResponse = generatePreview(llmResult.response);
-        const finalOutputTokens = countTokens(previewResponse);
-        const finalTotalTokens = inputTokens + finalOutputTokens;
+        // Give full response to all users
+        const actualOutputTokens = countTokens(llmResult.response);
         
         const processingTime = Date.now() - startTime;
 
-        // No graphs for free users - premium feature
-        const graphImages: string[] | undefined = undefined;
-        const graphDataJsons: string[] | undefined = undefined;
+        // Generate graphs for all users
+        let graphImages: string[] | undefined = undefined;
+        let graphDataJsons: string[] | undefined = undefined;
 
-        // Store assignment with preview only
+        if (llmResult.graphData && llmResult.graphData.length > 0) {
+          graphDataJsons = llmResult.graphData.map(g => JSON.stringify(g));
+          graphImages = await Promise.all(
+            llmResult.graphData.map(gd => generateGraphImage(gd))
+          );
+        }
+
+        // Store assignment with full answer
         const assignment = await storage.createAssignment({
           userId: null,
           sessionId: actualSessionId,
@@ -2655,23 +2549,22 @@ Respond with the refined solution only:`;
           fileName: null,
           extractedText: null,
           llmProvider,
-          llmResponse: previewResponse, // Store preview, not full answer
+          llmResponse: llmResult.response,
           graphData: graphDataJsons,
           graphImages: graphImages,
           processingTime,
           inputTokens,
-          outputTokens: finalOutputTokens,
+          outputTokens: actualOutputTokens,
         });
 
         const response: ProcessAssignmentResponse = {
           id: assignment.id,
           extractedText: inputText,
-          llmResponse: previewResponse, // Return preview to frontend
+          llmResponse: llmResult.response,
           graphData: graphDataJsons,
           graphImages: graphImages,
           processingTime,
           success: true,
-          isPreview: true, // Flag to indicate this is a preview
         };
 
         res.json(response);

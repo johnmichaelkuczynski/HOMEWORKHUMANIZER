@@ -2536,7 +2536,7 @@ Respond with the refined solution only:`;
         if (llmResult.graphData && llmResult.graphData.length > 0) {
           graphDataJsons = llmResult.graphData.map(g => JSON.stringify(g));
           graphImages = await Promise.all(
-            llmResult.graphData.map(gd => generateGraphImage(gd))
+            llmResult.graphData.map(gd => generateGraph(gd))
           );
         }
 

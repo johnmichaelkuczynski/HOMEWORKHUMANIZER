@@ -64,3 +64,12 @@ The application employs a clear client-server architecture.
   - Updated .gitignore with comprehensive exclusions for security, build artifacts, and sensitive files
   - Prepared codebase for safe push to https://github.com/johnmichaelkuczynski/HOMEWORKHUMANIZER.git
   - Removed 26MB of development artifacts and 270+ potentially sensitive files
+
+### October 5, 2025
+- Removed paywall completely - All users now have unlimited access:
+  - Eliminated generatePreview function and all "Buy Credits with PayPal" messages
+  - Removed token balance checking and deduction logic from homework assistant
+  - Disabled free tier token limits (FREE_INPUT_LIMIT, FREE_OUTPUT_LIMIT, FREE_DAILY_LIMIT)
+  - All users (registered and anonymous) now receive complete AI responses with full solutions
+  - Graph generation now enabled for all users, not just premium accounts
+  - Token checking endpoint now always returns canProcess: true with unlimited balance
